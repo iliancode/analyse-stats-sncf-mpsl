@@ -1,0 +1,203 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+---
+title: "Analyzing Train Delays in France: A Study of the Factors and Trends Influencing On-Time Performance"
+authors: ""
+date: "March 28, 2023"
+output: pdf_document
+---
+
+# Introduction
+
+## Context
+
+France has one of the most extensive rail networks in Europe, covering over 30,000 kilometers of track and serving millions of passengers annually. Train travel in France is a popular and convenient mode of transportation for both commuters and tourists. However, train delays can be a significant source of frustration for passengers and can lead to inconvenience, missed connections, and lost time. In this project, we aim to investigate the factors that contribute to train delays in France and explore whether there is a specific time of the year or season that is more prone to delays. Specifically, we will examine the relationship between the time of the year, season, and train delays to determine if there are patterns that can be used to predict delays and potentially help travelers plan their trips more effectively. While predictive modeling is outside the scope of this project due to time constraints, we will explore potential predictors and lay the groundwork for future predictive modeling. Ultimately, we hope to provide valuable insights that could be useful for researchers, transportation planners, and policymakers interested in improving the efficiency and reliability of the country's rail system as well as help travelers make informed decisions about when to travel to minimize delays.\
+
+## Our Dataset
+
+The dataset we will be using contains information on train delays in France from 2018 to 2022. The data was collected by the French railway company SNCF, and includes variables such as the date of the delay, the cause of the delay, the number of delayed trains, and the percentage of delays attributed to different causes (e.g. external factors, infrastructure issues, etc.). The dataset contains 69,657 observations and 14 variables.
+
+For this particular study, we will mainly focus on the observations made for routes between Paris Gare de Lyon station and Avignon TGV station but our methodology can be applied for any two stations of the data by making a couple of tweaks to our code. We chose these two specifically since Gare de Lyon is one of the most famous stations in France and has much more entries in our dataset than other stations and Avignon was just a random choice.
+
+We essentially found through analyzing multiple factors that had an impact on delays, that a large dataset and a complex feature engineering is needed to predict reliably whether or not picking a specific date to travel by train in france will get you to your destination at the desired time. But, delay factors do exist and they each have their trend if you look close enough.
+
+# Methodology
+
+We first start by loading the required packages and our data
+
+```{r}
+#Required packages
+library(ggplot2)
+library(dplyr)
+library(hrbrthemes)
+library(tidyr)
+library(stringr)
+library(Hmisc)
+
+# Loading CSV Files
+dataset <- read.csv("/Users/alvin/Desktop/regularite-mensuelle-tgv-aqst.csv", header = TRUE, sep = ";") #Don't forget to use the separator option for csv files
+```
+
+We then proceed to clean and select relevant data for our study. Although SNCF provided clean and tidy data, we went ahead and got rid of some columns that would've been useless for our analysis.
+
+```{r}
+#There is no missing data or null values, and our data was coherent but we do need to get rid of the comments, they won't be useful for any treatment to be done
+dataset <- dataset %>% select(-starts_with("Commentaire"))
+
+# We select only "Paris gare de lyon" and "AVIGNON TGV" which will be our case study for this instance
+routes_paris_gareDeLyon <- subset(dataset, Gare.de.départ == "PARIS LYON" )
+routes_selected <- subset(routes_paris_gareDeLyon, Gare.d.arrivée == "AVIGNON TGV")
+```
+
+Now, the first factor we decided to put to the test was date. More precisely, the month or season of the year. To do this we will first extract the delays per month, being careful enough to account for cancelled trains and making sure we take the proportions of delays into account as well.
+
+```{r}
+# Subset number of delays per month
+prop_delays = routes_selected %>%
+  select(Date, Nombre.de.trains.en.retard.à.l.arrivée, Nombre.de.circulations.prévues, Nombre.de.trains.annulés) %>%
+  mutate(delays_per_month = Nombre.de.trains.en.retard.à.l.arrivée/(Nombre.de.circulations.prévues-Nombre.de.trains.annulés),
+         Year = as.numeric(substr(Date, 1, 4)),
+         Month = as.numeric(substr(Date, 6, 7)))
+
+# create the plot
+ggplot(prop_delays, aes(x = Month, y = delays_per_month*100, color = factor(Year))) +
+  geom_line() +
+  labs(title = "Tendance des retards à l'arrivée", x = "Mois", y = "Proportion des trains en retard (%)") +
+  scale_color_manual(values = c("#00AFBB", "#E7B800", "#FC4E07", "#5B5B5B", "#8B0000")) +
+  scale_x_continuous(breaks = 1:12, labels = month.name[1:12])
+```
+
+As we can see in the graph, there is no real tendance showing through the graph, even though it would seem that in normal non-pandemic conditions, delays spike in the months of june and july. This could come from the fact that in these months, people travel more since it's the summer break. This would mean the probability of a delay happening increases when the number of scheduled trains increases as well. To find out, we made a correlation test between the number of scheduled trains for each month and the number of delays.
+
+```{r}
+#Extract number of scheduled trains
+sched_trains_df <- routes_selected %>%
+  select(Date, Nombre.de.circulations.prévues, Nombre.de.trains.en.retard.à.l.arrivée, Nombre.de.trains.annulés) %>%
+  mutate(sched_trains = Nombre.de.circulations.prévues,
+         modified_trains = Nombre.de.trains.en.retard.à.l.arrivée+Nombre.de.trains.annulés,
+         Year = as.numeric(substr(Date, 1, 4)),
+         Month = as.numeric(substr(Date, 6, 7)))
+
+# Calculate correlation coefficient
+correlation <- cor(sched_trains_df$sched_trains, sched_trains_df$modified_trains)
+
+# Create scatter plot with error bars
+ggplot(data = sched_trains_df, aes(x = Month, y = sched_trains)) +
+  geom_point() +
+  stat_summary(fun.data = "mean_sdl", mult = 1, geom = "errorbar", width = 0.2, color = "red") +
+  labs(title = "Correlation between scheduled trains and delayed and/or cancelled trains", x = "Month", y = "Scheduled Trains") +
+  scale_x_continuous(breaks = 1:12, labels = month.abb) +
+  geom_hline(yintercept = mean(sched_trains_df$sched_trains), linetype = "dashed", color = "blue") +
+  annotate("text", x = 2, y = 0.025, label = paste("Correlation:", round(correlation, 2)), color = "blue") +
+  theme_minimal()
+```
+
+After analyzing the data, it is clear that there is a strong correlation between the number of scheduled trains and the number of delayed or cancelled trains. This observation suggests that the capacity of the railway system may be a contributing factor to delays and cancellations. As the number of scheduled trains increases, it may become more difficult to maintain the system's efficiency, resulting in more delays and cancellations. However, further analysis is needed to determine the extent to which this correlation holds true and whether other factors such as external causes or infrastructure issues also play a role.
+
+It is important to note that the dataset takes into account the years affected by the COVID-19 pandemic, which could have had an impact on the correlation found between the number of scheduled trains and the number of delayed or cancelled trains. The pandemic led to a significant decrease in train traffic and changes in travel patterns, which could have affected the relationship between these variables. Nevertheless, this correlation holds true for non pandemic affected years, such as 2018 and 2022 which indicates that the pandemic might not have made a substantial difference in our calculations.
+
+We can now shift our focus to understanding the reasons behind these delays. To do so, we will analyze the proportion of different factors contributing to the delays. In this dataset, we have access to the percentage of delays caused by multiple factors
+
+```{r}
+# Select factor percentage columns and rename for easier handling
+prop_causes <- routes_selected %>%
+  select(starts_with("Prct.retard.pour.cause")) %>%
+  rename(Externes = Prct.retard.pour.causes.externes,
+         Infrastructure = Prct.retard.pour.cause.infrastructure,
+         Gestion_Trafic = Prct.retard.pour.cause.gestion.trafic,
+         Materiel_Roulant = Prct.retard.pour.cause.matériel.roulant,
+         Gestion_Gare = Prct.retard.pour.cause.gestion.en.gare.et.réutilisation.de.matériel,
+         Prise_en_compte_voyageurs = Prct.retard.pour.cause.prise.en.compte.voyageurs..affluence..gestions.PSH..correspondances.)
+
+# Summarize by cause to get total percentage
+prop_causes <- prop_causes %>%
+  summarise(Externes = sum(Externes),
+            Infrastructure = sum(Infrastructure),
+            Gestion_Trafic = sum(Gestion_Trafic),
+            Materiel_Roulant = sum(Materiel_Roulant),
+            Gestion_Gare = sum(Gestion_Gare),
+            Prise_en_compte = sum(Prise_en_compte_voyageurs)) %>%
+  pivot_longer(cols = everything(), names_to = "cause", values_to = "total_delay") %>%
+  mutate(cause = factor(cause, levels = c("Externes", "Infrastructure", "Gestion_Trafic", "Materiel_Roulant", "Gestion_Gare", "Prise_en_compte_voyageurs"))) %>%
+  group_by(cause) %>%
+  summarise(total_delay = sum(total_delay)) %>%
+  mutate(prop_delay = total_delay / sum(total_delay) * 100)
+
+# create the wheel chart
+ggplot(prop_causes, aes(x = "", y = prop_delay, fill = cause)) +
+  geom_bar(stat = "identity", color = "white", width = 1) +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  scale_fill_manual(values = c("#FFC107", "#03A9F4", "#4CAF50", "red", "#9C27B0", "#607D8B")) +
+  labs(title = "Total Delays by Cause",
+       fill = "Cause",
+       x = NULL,
+       y = NULL) +
+  theme(legend.position = "bottom")
+```
+
+Based on the wheel chart, it appears that the main causes of delays in the dataset are related to infrastructure, traffic management, rolling stock, and external factors and that for this specific route, station management flows smoothly. This suggests that delays are not solely the responsibility of the train operator, but are also impacted by external factors such as weather or accidents, which are highly unpredictable. The high percentage of delays due to infrastructure and rolling stock issues suggests that there may be opportunities to improve maintenance and repair processes to reduce delays. Similarly, the high percentage of delays due to traffic management indicates that scheduling and management of train movements have a heavy influence on delays. Overall, these findings suggest that there are multiple factors contributing in equal parts to delays in the train system, and that pinpointing how to avoid them may require a heftier feature engineering. However, intuitively, we might tend to observe how these proportions evolve during the year. Let's find out:
+
+```{r}
+# Select relevant columns and rename for easier handling
+total_causes <- routes_selected %>%
+  select(Date,
+         Nombre.de.circulations.prévues,
+         starts_with("Prct.retard.pour.cause")) %>%
+  rename(Externes = Prct.retard.pour.causes.externes,
+         Infrastructure = Prct.retard.pour.cause.infrastructure,
+         Gestion_Trafic = Prct.retard.pour.cause.gestion.trafic,
+         Materiel_Roulant = Prct.retard.pour.cause.matériel.roulant,
+         Gestion_Gare = Prct.retard.pour.cause.gestion.en.gare.et.réutilisation.de.matériel,
+         Prise_en_compte_voyageurs = Prct.retard.pour.cause.prise.en.compte.voyageurs..affluence..gestions.PSH..correspondances.)
+
+# Calculate total delay time for each cause
+total_causes <- total_causes %>%
+  mutate(Month = as.numeric(substr(Date, 6, 7)),
+         total_Externes = Externes * Nombre.de.circulations.prévues,
+         total_Infrastructure = Infrastructure * Nombre.de.circulations.prévues,
+         total_Gestion_Trafic = Gestion_Trafic * Nombre.de.circulations.prévues,
+         total_Materiel_Roulant = Materiel_Roulant * Nombre.de.circulations.prévues,
+         total_Gestion_Gare = Gestion_Gare * Nombre.de.circulations.prévues,
+         total_Prise_en_compte_voyageurs = Prise_en_compte_voyageurs * Nombre.de.circulations.prévues) %>%
+  select(-Externes, -Infrastructure, -Gestion_Trafic, -Materiel_Roulant, -Gestion_Gare, -Prise_en_compte_voyageurs) %>%
+  group_by(Month) %>%
+  summarise(total_Externes = sum(total_Externes),
+            total_Infrastructure = sum(total_Infrastructure),
+            total_Gestion_Trafic = sum(total_Gestion_Trafic),
+            total_Materiel_Roulant = sum(total_Materiel_Roulant),
+            total_Gestion_Gare = sum(total_Gestion_Gare),
+            total_Prise_en_compte_voyageurs = sum(total_Prise_en_compte_voyageurs))
+
+# Reshape data for plotting
+total_causes <- total_causes %>%
+  pivot_longer(cols = starts_with("total"), names_to = "cause", values_to = "total_delay") %>%
+  mutate(cause = factor(cause, levels = c("total_Externes", "total_Infrastructure", "total_Gestion_Trafic", "total_Materiel_Roulant", "total_Gestion_Gare", "total_Prise_en_compte_voyageurs")))
+
+# Plot bar chart
+ggplot(total_causes, aes(x = Month, y = total_delay, fill = cause)) +
+  geom_bar(stat = "identity", color = "black", position = "dodge") +
+  scale_x_continuous(breaks = 1:12, labels = month.abb)+
+  scale_fill_manual(values = c("#FFC107", "#03A9F4", "#4CAF50", "red", "#9C27B0", "#607D8B")) +
+  labs(title = "Total Trains Delayed By Cause and Month",
+       x = "Month",
+       y = "Total trains delayed",
+       fill = "Cause") +
+  theme_minimal()
+
+```
+
+# Conclusion
+
+Based on the analysis of train delay causes, we can conclude that there are certain trends that can be observed in different months. For instance, during the winter season, external causes of delay are higher, while infrastructure delays remain relatively stable throughout the year. Furthermore, from February through May, there are fewer delays related to material rolling stock. Additionally, during months with low traffic, there are also fewer delays caused by traffic management.
+
+However, it is important to note that other factors, such as unexpected external events, can also cause delays that are not accounted for in this analysis. Furthermore, the database used for this analysis covers the years 2018 to 2020, which includes the COVID-19 pandemic period, and the trends observed during this time may not be representative of typical travel patterns.
+
+Therefore, while this analysis provides valuable insights into train delay causes, further and more comprehensive analysis would be needed to make more accurate predictions about the best time to travel. As such, it's best to approach this information with caution and keep in mind that individual experiences may vary. Nevertheless, by being aware of these trends, passengers may be able to plan their travel with more informed expectations and reduce the impact of delays on their journeys.
+
+# References
+
+SNCF Dataset 'Régularité mensuelle TGV par liaisons' : <https://ressources.data.sncf.com/explore/dataset/regularite-mensuelle-tgv-aqst/table/?sort=date>
